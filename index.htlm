@@ -57,36 +57,36 @@
 
       <div class="row">
         <div>
-          <label>Ön-işleme: Kontrast (CLAHE benzeri basit)</label>
+          <label>Ön-işleme: Kontrast</label>
           <input id="contrast" type="range" min="0" max="40" value="10" />
-          <div class="hint">Düşük SNR görüntülerde yıldızları belirginleştirir; fazla açarsan gürültüyü “yıldız” sanabilir.</div>
+          <div class="hint">Yıldızları belirginleştirir; fazla artırırsan gürültüyü “yıldız” sayabilir.</div>
         </div>
         <div>
           <label>Arka plan bastırma (blur radius)</label>
           <input id="bgRadius" type="range" min="5" max="80" value="28" />
-          <div class="hint">Nebula/gradients varsa arka plan modellemesi kritik.</div>
+          <div class="hint">Gradient / nebula varsa arka plan modellemesi kritik.</div>
         </div>
 
         <div>
           <label>Eşik (threshold) — daha yüksek = daha az yıldız</label>
           <input id="thr" type="range" min="5" max="80" value="24" />
-          <div class="hint">En pratik ayar: yıldızlar görünürken gürültü kaybolana kadar artır.</div>
+          <div class="hint">Gürültü kaybolana kadar yükselt; yıldızlar gidiyorsa düşür.</div>
         </div>
         <div>
           <label>Minimum yıldız alanı (px)</label>
           <input id="minArea" type="range" min="1" max="40" value="6" />
-          <div class="hint">Hot pixel/noise elemek için yükselt. Çok yükseltirsen küçük yıldızlar gider.</div>
+          <div class="hint">Hot pixel/noise elemek için yükselt.</div>
         </div>
 
         <div>
           <label>Maksimum yıldız alanı (px)</label>
           <input id="maxArea" type="range" min="20" max="2000" value="700" />
-          <div class="hint">Galaksi çekirdeği/nebula parçası gibi büyük parlak bölgeleri “yıldız” saymamak için düşür.</div>
+          <div class="hint">Büyük parlak bölgeleri “yıldız” saymamak için düşür.</div>
         </div>
         <div>
           <label>Birleştirme (yakın blobları merge et)</label>
           <input id="mergeDist" type="range" min="0" max="8" value="2" />
-          <div class="hint">İkili yıldızlar ve şişkin PSF’lerde split/merge dengesi.</div>
+          <div class="hint">Çok yakın yıldızları tek saymaya yardımcı olur.</div>
         </div>
       </div>
 
@@ -107,7 +107,7 @@
 
       <div style="height:10px"></div>
       <div class="hint">
-        Not: Bu bir “tarayıcı tabanlı hızlı sayım” modülü. En doğru sonuç için <span class="mono">threshold</span>, <span class="mono">minArea</span>, <span class="mono">maxArea</span> ayarlarını görüntüne göre kalibre et.
+        Not: Bu modül hızlı ve offline çalışır. En doğru sonuç için <span class="mono">threshold</span>, <span class="mono">minArea</span>, <span class="mono">maxArea</span> ayarlarını görüntüne göre optimize et.
       </div>
     </section>
 
@@ -124,7 +124,7 @@
       </div>
       <div style="height:10px"></div>
       <div class="hint">
-        İşaretleme: her yıldız adayının merkezine küçük bir halka çizilir. Çok yoğun alanlarda görsel kalabalık normal.
+        İşaretleme: her yıldız adayının merkezine halka çizilir. Yoğun alanlarda kalabalık görünmesi normal.
       </div>
     </section>
   </div>
@@ -132,7 +132,6 @@
 
 <script>
 (() => {
-  // ====== UI refs ======
   const $ = (id) => document.getElementById(id);
   const fileEl = $("file");
   const analyzeBtn = $("analyzeBtn");
@@ -158,11 +157,9 @@
   const ctxOrig = cOrig.getContext("2d", { willReadFrequently: true });
   const ctxOut = cOut.getContext("2d", { willReadFrequently: true });
 
-  // ====== State ======
   let imgBitmap = null;
   let lastResult = null;
 
-  // ====== Helpers ======
   function setStatus(text, kind="neutral"){
     statusPill.textContent = text;
     statusPill.style.border = "1px solid rgba(127,127,127,.25)";
@@ -175,13 +172,11 @@
 
   function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
-  // Box blur (separable) for background estimation
   function boxBlurGray(src, w, h, radius){
     radius = Math.max(1, Math.floor(radius));
     const tmp = new Float32Array(w*h);
     const out = new Float32Array(w*h);
 
-    // horizontal
     for(let y=0; y<h; y++){
       let sum = 0;
       const row = y*w;
@@ -193,12 +188,11 @@
       for(let x=1; x<w; x++){
         const addX = clamp(x+radius, 0, w-1);
         const subX = clamp(x-radius-1, 0, w-1);
-        sum += src[row + addX] - src[row + subX];
+        sum += tmp[row + addX] - tmp[row + subX];
         tmp[row + x] = sum / (radius*2+1);
       }
     }
 
-    // vertical
     for(let x=0; x<w; x++){
       let sum = 0;
       for(let y=-radius; y<=radius; y++){
@@ -216,13 +210,10 @@
     return out;
   }
 
-  // Simple contrast boost around midtones
   function applyContrast(gray, strength){
-    // strength: 0..40
-    const s = strength / 40; // 0..1
+    const s = strength / 40;
     const out = new Float32Array(gray.length);
-    // gamma-like push: y = (x-0.5)*(1+k)+0.5 then clamp
-    const k = 2.2 * s; // 0..2.2
+    const k = 2.2 * s;
     for(let i=0;i<gray.length;i++){
       let x = gray[i];
       x = (x - 0.5) * (1 + k) + 0.5;
@@ -236,25 +227,21 @@
     const n = imgData.width * imgData.height;
     const g = new Float32Array(n);
     for(let i=0, p=0; i<n; i++, p+=4){
-      // luminance
       g[i] = (0.2126*d[p] + 0.7152*d[p+1] + 0.0722*d[p+2]) / 255;
     }
     return g;
   }
 
-  // Connected components on binary mask; returns blobs with area and centroid
   function findBlobs(mask, w, h, minArea, maxArea){
     const visited = new Uint8Array(w*h);
     const blobs = [];
     const qx = new Int32Array(w*h);
     const qy = new Int32Array(w*h);
-
     const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
 
     for(let i=0;i<w*h;i++){
       if(!mask[i] || visited[i]) continue;
 
-      // BFS
       let head=0, tail=0;
       const sx = i % w, sy = (i / w) | 0;
       visited[i] = 1;
@@ -262,7 +249,6 @@
 
       let area = 0;
       let sumX = 0, sumY = 0;
-      let minX = sx, maxX = sx, minY = sy, maxY = sy;
 
       while(head < tail){
         const x = qx[head], y = qy[head]; head++;
@@ -270,8 +256,6 @@
 
         area++;
         sumX += x; sumY += y;
-        if(x<minX) minX=x; if(x>maxX) maxX=x;
-        if(y<minY) minY=y; if(y>maxY) maxY=y;
 
         for(const [dx,dy] of dirs){
           const nx = x + dx, ny = y + dy;
@@ -285,18 +269,12 @@
       }
 
       if(area >= minArea && area <= maxArea){
-        blobs.push({
-          area,
-          cx: sumX / area,
-          cy: sumY / area,
-          bbox: { minX, minY, maxX, maxY }
-        });
+        blobs.push({ area, cx: sumX / area, cy: sumY / area });
       }
     }
     return blobs;
   }
 
-  // Merge close centroids (very simple clustering)
   function mergeClose(blobs, dist){
     if(dist <= 0) return blobs;
     const d2 = dist*dist;
@@ -309,13 +287,13 @@
       let sumX = blobs[i].cx, sumY = blobs[i].cy, sumA = blobs[i].area, count = 1;
       let changed = true;
 
-      // greedy merge pass
       while(changed){
         changed = false;
         for(let j=i+1;j<blobs.length;j++){
           if(used[j]) continue;
-          const dx = blobs[j].cx - (sumX/count);
-          const dy = blobs[j].cy - (sumY/count);
+          const mx = sumX / count, my = sumY / count;
+          const dx = blobs[j].cx - mx;
+          const dy = blobs[j].cy - my;
           if(dx*dx + dy*dy <= d2){
             used[j] = 1;
             sumX += blobs[j].cx;
@@ -326,7 +304,6 @@
           }
         }
       }
-
       out.push({ cx: sumX/count, cy: sumY/count, area: sumA });
     }
     return out;
@@ -337,7 +314,7 @@
     ctx.lineWidth = Math.max(1, Math.round(ctx.canvas.width / 900));
     ctx.strokeStyle = "rgba(0,255,120,0.95)";
     for(const s of stars){
-      const r = Math.max(3, Math.sqrt(s.area)); // heuristic
+      const r = Math.max(3, Math.sqrt(s.area));
       ctx.beginPath();
       ctx.arc(s.cx, s.cy, r, 0, Math.PI*2);
       ctx.stroke();
@@ -357,7 +334,6 @@
     URL.revokeObjectURL(url);
   }
 
-  // ====== Core pipeline ======
   async function analyze(){
     if(!imgBitmap) return;
 
@@ -367,64 +343,47 @@
     const w = imgBitmap.width, h = imgBitmap.height;
     kpiW.textContent = w; kpiH.textContent = h;
 
-    // Draw original
     cOrig.width = w; cOrig.height = h;
     cOut.width = w; cOut.height = h;
     ctxOrig.drawImage(imgBitmap, 0, 0);
-    ctxOut.clearRect(0,0,w,h);
     ctxOut.drawImage(imgBitmap, 0, 0);
 
-    // Read pixels
     const imgData = ctxOrig.getImageData(0,0,w,h);
     let gray = toGrayFloat(imgData);
 
-    // Contrast boost
     const contrast = Number(contrastEl.value);
     if(contrast > 0) gray = applyContrast(gray, contrast);
 
-    // Background estimation and subtraction
     const bgRadius = Number(bgRadiusEl.value);
     const bg = boxBlurGray(gray, w, h, bgRadius);
+
     const sub = new Float32Array(gray.length);
     for(let i=0;i<gray.length;i++){
-      // subtract background then normalize-ish
       let v = gray[i] - bg[i];
-      v = (v + 0.15);      // lift a bit to keep faint stars
+      v = (v + 0.15);
       sub[i] = clamp(v, 0, 1);
     }
 
-    // Thresholding
-    const thr = Number(thrEl.value) / 100; // 0.05..0.80
+    const thr = Number(thrEl.value) / 100;
     const mask = new Uint8Array(w*h);
     for(let i=0;i<sub.length;i++){
       mask[i] = sub[i] > thr ? 1 : 0;
     }
 
-    // Connected components
     const minArea = Number(minAreaEl.value);
     const maxArea = Number(maxAreaEl.value);
     let blobs = findBlobs(mask, w, h, minArea, maxArea);
 
-    // Merge close detections
     const mergeDist = Number(mergeDistEl.value);
     const stars = mergeClose(blobs, mergeDist);
 
-    // Draw detections
     drawRings(ctxOut, stars);
 
-    const t1 = performance.now();
-    const ms = Math.round(t1 - t0);
+    const ms = Math.round(performance.now() - t0);
 
     lastResult = {
       image: { width: w, height: h },
-      params: {
-        contrast,
-        bgRadius,
-        threshold: thr,
-        minArea,
-        maxArea,
-        mergeDist
-      },
+      params: { contrast, bgRadius, threshold: thr, minArea, maxArea, mergeDist },
       stars: stars.map((s, idx) => ({
         id: idx+1,
         x: Number(s.cx.toFixed(2)),
@@ -442,19 +401,12 @@
     downloadJsonBtn.disabled = false;
     downloadCsvBtn.disabled = false;
 
-    // Heuristic quality message
-    if(lastResult.count === 0){
-      setStatus("0 tespit — threshold çok yüksek olabilir", "warn");
-    } else {
-      setStatus("Tamamlandı", "ok");
-    }
+    setStatus(lastResult.count ? "Tamamlandı" : "0 tespit — threshold yüksek olabilir", lastResult.count ? "ok" : "warn");
   }
 
-  // ====== Events ======
   fileEl.addEventListener("change", async (e) => {
     const f = e.target.files?.[0];
     if(!f) return;
-
     try{
       setStatus("Görüntü yükleniyor…", "work");
       const url = URL.createObjectURL(f);
@@ -466,7 +418,6 @@
       downloadJsonBtn.disabled = true;
       downloadCsvBtn.disabled = true;
 
-      // Auto-draw
       cOrig.width = imgBitmap.width; cOrig.height = imgBitmap.height;
       cOut.width = imgBitmap.width; cOut.height = imgBitmap.height;
       ctxOrig.drawImage(imgBitmap, 0, 0);
@@ -487,13 +438,8 @@
 
   analyzeBtn.addEventListener("click", analyze);
 
-  // Re-analyze on parameter change (lightweight “operational excellence”)
   const reAnalyze = () => { if(imgBitmap) analyze(); };
   [contrastEl, bgRadiusEl, thrEl, minAreaEl, maxAreaEl, mergeDistEl].forEach(el => {
-    el.addEventListener("input", () => {
-      // Don’t spam too hard
-      if(imgBitmap) setStatus("Ayar değişti — analiz güncelleniyor…", "work");
-    });
     el.addEventListener("change", reAnalyze);
   });
 
@@ -532,9 +478,9 @@
     downloadText("star_count_stars.csv", csv, "text/csv");
   });
 
-  // Default canvas size
   cOrig.width = 300; cOrig.height = 200;
   cOut.width = 300; cOut.height = 200;
+  setStatus("Hazır", "neutral");
 })();
 </script>
 </body>
